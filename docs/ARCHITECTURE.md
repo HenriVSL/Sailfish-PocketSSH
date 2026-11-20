@@ -54,7 +54,8 @@ parsing, screen state and key encoding, and PocketSSH draws the result itself.
   latest window size, sends keepalives every 30 s, and `poll()`s the socket plus an eventfd
   that `write()`, `resize()` and `disconnectFromHost()` use to wake it.
 - **Teardown** never blocks the UI for long: a blocking phase is cut short by shutting the
-  socket down; the destructor waits at most a few seconds. Sends use `MSG_NOSIGNAL`, so a dead
+  socket down, the destructor waits at most a few seconds, and a worker stuck in a DNS lookup
+  (which can't be interrupted) is detached at once and cleans up after itself. Sends use `MSG_NOSIGNAL`, so a dead
   connection can't raise SIGPIPE. `closed(error)` is emitted exactly once.
 
 ## Terminal layer (src/terminal/)

@@ -29,6 +29,7 @@
 #include <QWaitCondition>
 #include <QtDebug>
 
+#include <atomic>
 #include <deque>
 #include <functional>
 
@@ -224,6 +225,7 @@ public:
     // and after disconnectFromHost() nothing but closed("") is.
     static bool live(const SshSession *s) { return !s->m_closed && !(s->m_worker && s->m_worker->m_ownerStopped); }
     bool m_ownerStopped = false;    // owner thread only: disconnectFromHost() was called
+    std::atomic<bool> m_resolving { false }; // inside getaddrinfo(), which can't be interrupted
 
     // --- worker-thread tasks ---
     void doConnect(const QString &host, int port, int timeoutMs);
@@ -548,7 +550,9 @@ bool SshSession::Worker::connectSocket(const QString &host, int port, int timeou
     const QByteArray hostName = host.trimmed().toUtf8();
     const QByteArray service = QByteArray::number(port);
     // Blocking and not interruptible; disconnectFromHost() is honoured right after.
+    m_resolving = true;
     const int gai = getaddrinfo(hostName.constData(), service.constData(), &hints, &res);
+    m_resolving = false;
     if (stopRequested()) {
         if (res)
             freeaddrinfo(res);
@@ -1287,9 +1291,11 @@ SshSession::~SshSession()
     // Normally the worker says goodbye to the server and exits quickly. If it is
     // stuck (unresponsive peer), cut the socket; if it is still stuck after that
     // (a DNS lookup can't be interrupted), let it finish and delete itself later.
-    if (!m_worker->wait(1000)) {
+    // A DNS lookup can take as long as the resolver likes: don't freeze the UI for it.
+    const bool resolving = m_worker->m_resolving;
+    if (resolving || !m_worker->wait(1000)) {
         m_worker->forceShutdown();
-        if (!m_worker->wait(3000)) {
+        if (resolving || !m_worker->wait(3000)) {
             qWarning("SshSession: worker thread still busy; detaching it");
             Worker *w = m_worker;
             QObject::connect(w, &QThread::finished, w, &QObject::deleteLater);
