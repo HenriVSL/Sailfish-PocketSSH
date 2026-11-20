@@ -228,6 +228,40 @@ int main(int argc, char **argv)
     item->setFontPixelSize(22);
     QTest::qWait(300);
 
+    // Pinch: the zoom follows the finger distance from the first two-finger frame,
+    // both with fingers landing together and with the second finger landing later.
+    {
+        QTouchDevice *dev = QTest::createTouchDevice();
+        auto pinch = [&](qreal d1, qreal d2, bool together) {
+            const QPoint c(360, 600);
+            auto at = [&](qreal d, int side) { return c + QPoint(int(side * d / 2), 0); };
+            if (together) {
+                QTest::touchEvent(&window, dev).press(0, at(d1, -1)).press(1, at(d1, 1));
+            } else {
+                QTest::touchEvent(&window, dev).press(0, at(d1, -1));
+                QTest::qWait(250);
+                // (QTest's stationary() carries no position, so repeat finger 1 with move())
+                QTest::touchEvent(&window, dev).move(0, at(d1, -1)).press(1, at(d1, 1));
+            }
+            for (int i = 1; i <= 20; ++i) {
+                const qreal d = d1 + (d2 - d1) * i / 20;
+                QTest::touchEvent(&window, dev).move(0, at(d, -1)).move(1, at(d, 1));
+                QTest::qWait(10);
+            }
+            QTest::touchEvent(&window, dev).release(0, at(d2, -1)).release(1, at(d2, 1));
+            QTest::qWait(50);
+        };
+        item->setFontPixelSize(40);
+        pinch(400, 200, true);
+        printf("  pinch 400->200 (together): 40 -> %.0f\n", item->fontPixelSize());
+        check(item->fontPixelSize() == 20, "pinch-in halves the font");
+        pinch(200, 400, false);
+        printf("  pinch 200->400 (second finger later): 20 -> %.0f\n", item->fontPixelSize());
+        check(item->fontPixelSize() == 40, "pinch-out with staggered fingers doubles the font");
+        item->setFontPixelSize(22);
+        QTest::qWait(300);
+    }
+
     // Cover: resizesTerminal false, scaled to fit the columns, unfocused (hollow cursor).
     {
         QQuickWindow cover;

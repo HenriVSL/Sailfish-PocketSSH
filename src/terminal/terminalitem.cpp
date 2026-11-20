@@ -4,6 +4,8 @@
 #include "terminal/terminal_p.h"
 
 #include <QClipboard>
+#include <QDateTime>
+#include <cstdio>
 #include <QElapsedTimer>
 #include <QFontMetricsF>
 #include <QGlyphRun>
@@ -77,6 +79,12 @@ inline QRgb blend(QRgb a, QRgb b, qreal t) // t = weight of a
 
 const QRgb kSelection = blend(kCursor, kBackground, 0.38);
 
+bool touchDebugEnabled()
+{
+    static const bool on = qEnvironmentVariableIsSet("POCKETSSH_TOUCH_DEBUG");
+    return on;
+}
+
 bool isWordChar(uint c)
 {
     if (c == 0 || c == ' ' || c == '\t')
@@ -114,10 +122,21 @@ public:
         }
 
     protected:
-        void mousePressEvent(QMouseEvent *e) override { d->press(e->localPos()); e->accept(); }
+        void mousePressEvent(QMouseEvent *e) override
+        {
+            if (touchDebugEnabled())
+                fprintf(stderr, "TOUCH area press %.0f,%.0f\n", e->localPos().x(), e->localPos().y());
+            d->press(e->localPos());
+            e->accept();
+        }
         void mouseMoveEvent(QMouseEvent *e) override { d->move(e->localPos()); e->accept(); }
         void mouseReleaseEvent(QMouseEvent *e) override { d->release(e->localPos()); e->accept(); }
-        void mouseUngrabEvent() override { d->cancelGesture(); }
+        void mouseUngrabEvent() override
+        {
+            if (touchDebugEnabled())
+                fprintf(stderr, "TOUCH area mouseUngrab\n");
+            d->cancelGesture();
+        }
         void mouseDoubleClickEvent(QMouseEvent *e) override { e->accept(); }
 
     private:
@@ -177,6 +196,8 @@ public:
     qint64 flickLast = 0;
 
     bool pinching = false;
+    int pinchIds[2] = {-1, -1};
+    QPointF pinchPos[2];
     qreal pinchStartDist = 1;
     qreal pinchStartFont = kDefaultFontPx;
 
@@ -218,6 +239,7 @@ public:
     void stopFlick();
 
     bool pinchTouch(QTouchEvent *e);
+    void holdMouseGrab();
     void endPinch();
 
     bool selected(int row, int col) const;
@@ -720,16 +742,20 @@ void TerminalItem::Private::tap(const QPointF &pos)
 
 bool TerminalItem::Private::pinchTouch(QTouchEvent *e)
 {
-    QList<QTouchEvent::TouchPoint> active;
-    for (const QTouchEvent::TouchPoint &p : e->touchPoints()) {
-        if (p.state() != Qt::TouchPointReleased)
-            active.append(p);
-    }
     const bool ending = e->type() == QEvent::TouchEnd || e->type() == QEvent::TouchCancel;
     if (!pinching) {
+        QList<QTouchEvent::TouchPoint> active;
+        for (const QTouchEvent::TouchPoint &p : e->touchPoints()) {
+            if (p.state() != Qt::TouchPointReleased)
+                active.append(p);
+        }
         if (ending || active.size() < 2 || !resizes)
             return false;
-        const QPointF d = active.at(0).pos() - active.at(1).pos();
+        for (int k = 0; k < 2; ++k) {
+            pinchIds[k] = active.at(k).id();
+            pinchPos[k] = active.at(k).pos();
+        }
+        const QPointF d = pinchPos[0] - pinchPos[1];
         pinchStartDist = qMax(qreal(1), std::hypot(d.x(), d.y()));
         pinchStartFont = fontPx;
         pinching = true;
@@ -737,21 +763,52 @@ bool TerminalItem::Private::pinchTouch(QTouchEvent *e)
         stopFlick();
         mode = Idle;
         resizeTimer.stop();
-        q->grabTouchPoints(QVector<int>() << active.at(0).id() << active.at(1).id());
+        q->grabTouchPoints(QVector<int>() << pinchIds[0] << pinchIds[1]);
         q->setKeepTouchGrab(true);
-        if (q->window() && q->window()->mouseGrabberItem() != q)
-            q->grabMouse();
-        q->setKeepMouseGrab(true);
+        holdMouseGrab();
+        if (touchDebugEnabled())
+            fprintf(stderr, "TOUCH pinch START dist %.0f font %.0f\n", pinchStartDist, fontPx);
         return true;
     }
-    if (ending || active.size() < 2) {
+
+    // Follow the two pinch points by id; an event may leave out a point that did not
+    // move, and other points (a third finger) are ignored.
+    bool released = false;
+    for (const QTouchEvent::TouchPoint &p : e->touchPoints()) {
+        for (int k = 0; k < 2; ++k) {
+            if (p.id() != pinchIds[k])
+                continue;
+            if (p.state() == Qt::TouchPointReleased)
+                released = true;
+            else
+                pinchPos[k] = p.pos();
+        }
+    }
+    if (ending || released) {
+        if (touchDebugEnabled())
+            fprintf(stderr, "TOUCH pinch END ending=%d released=%d\n", int(ending), int(released));
         endPinch();
         return true;
     }
-    const QPointF d = active.at(0).pos() - active.at(1).pos();
+    holdMouseGrab();
+    const QPointF d = pinchPos[0] - pinchPos[1];
     const qreal dist = std::hypot(d.x(), d.y());
     q->setFontPixelSize(qRound(pinchStartFont * dist / pinchStartDist));
+    if (touchDebugEnabled())
+        fprintf(stderr, "TOUCH pinch dist %.0f start %.0f font %.0f\n", dist, pinchStartDist, fontPx);
     return true;
+}
+
+void TerminalItem::Private::holdMouseGrab()
+{
+    // Qt 5.6 drops our mouse grab right after the filter takes the touch points, and
+    // then offers the first touch point to the ancestors' filters as a synthesized
+    // mouse event: Silica's PageStack takes the horizontal finger movement of a pinch
+    // as a back swipe and steals the point. A mouse grab with keepMouseGrab makes it
+    // leave the pinch alone.
+    if (q->window() && q->window()->mouseGrabberItem() != q)
+        q->grabMouse();
+    q->setKeepMouseGrab(true);
 }
 
 void TerminalItem::Private::endPinch()
@@ -1477,9 +1534,30 @@ void TerminalItem::wheelEvent(QWheelEvent *event)
     event->accept();
 }
 
+
+static void logTouch(const char *where, QEvent *event, QQuickItem *self)
+{
+    if (!touchDebugEnabled())
+        return;
+    QString s;
+    if (event && (event->type() == QEvent::TouchBegin || event->type() == QEvent::TouchUpdate
+                  || event->type() == QEvent::TouchEnd || event->type() == QEvent::TouchCancel)) {
+        for (const QTouchEvent::TouchPoint &p : static_cast<QTouchEvent *>(event)->touchPoints())
+            s += QStringLiteral(" [%1 s%2 %3,%4]").arg(p.id()).arg(int(p.state())).arg(p.pos().x()).arg(p.pos().y());
+    } else if (event) {
+        const QMouseEvent *m = dynamic_cast<QMouseEvent *>(event);
+        if (m)
+            s = QStringLiteral(" mouse %1,%2 src%3").arg(m->localPos().x()).arg(m->localPos().y()).arg(int(m->source()));
+    }
+    QQuickItem *grabber = self->window() ? self->window()->mouseGrabberItem() : nullptr;
+    fprintf(stderr, "TOUCH %lld %s type=%d%s grabber=%s\n", (long long)QDateTime::currentMSecsSinceEpoch() % 100000, where,
+            event ? int(event->type()) : -1, qPrintable(s), grabber ? grabber->metaObject()->className() : "none");
+}
+
 bool TerminalItem::childMouseEventFilter(QQuickItem *item, QEvent *event)
 {
     Q_UNUSED(item)
+    logTouch("filter", event, this);
     switch (event->type()) {
     case QEvent::TouchBegin:
     case QEvent::TouchUpdate:
@@ -1493,6 +1571,7 @@ bool TerminalItem::childMouseEventFilter(QQuickItem *item, QEvent *event)
 
 void TerminalItem::touchEvent(QTouchEvent *event)
 {
+    logTouch("touchEvent", event, this);
     // Only reached for the touch points grabbed for a pinch.
     if (d->pinching) {
         d->pinchTouch(event);
@@ -1504,5 +1583,6 @@ void TerminalItem::touchEvent(QTouchEvent *event)
 
 void TerminalItem::touchUngrabEvent()
 {
+    logTouch("touchUngrab", nullptr, this);
     d->endPinch();
 }

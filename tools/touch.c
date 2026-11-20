@@ -14,6 +14,8 @@
  *   hold X Y [MS]            long press (default 900 ms)
  *   drag X1 Y1 X2 Y2 [MS]    press, move, release (default 300 ms)
  *   pinch X Y D1 D2 [MS]     two fingers around (X, Y), horizontal distance D1 -> D2
+ *   pinch2 X Y D1 D2 [MS] [DELAY]  like pinch, but the second finger lands DELAY ms
+ *                            (default 250) after the first, as real fingers do
  *   type TEXT                type ASCII text on a virtual USB keyboard (US layout; \n = Enter)
  *   typefile PATH            type the contents of a file (no quoting trouble over ssh)
  *   key NAME...              keys and combos: enter backspace tab esc up down left right
@@ -149,10 +151,15 @@ static void hold(double x, double y, int ms)
     syn(touch_fd);
 }
 
-static void pinch(double x, double y, double d1, double d2, int ms)
+static void pinch(double x, double y, double d1, double d2, int ms, int delay)
 {
     int steps = ms / 12 < 2 ? 2 : ms / 12;
     finger(0, x - d1 / 2, y, 1);
+    if (delay > 0) {
+        buttons(1);
+        syn(touch_fd);
+        usleep(delay * 1000);
+    }
     finger(1, x + d1 / 2, y, 1);
     buttons(1);
     syn(touch_fd);
@@ -374,7 +381,10 @@ int main(int argc, char **argv)
              (int)arg(argc, argv, 6, 300));
     else if (!strcmp(cmd, "pinch"))
         pinch(arg(argc, argv, 2, 0), arg(argc, argv, 3, 0), arg(argc, argv, 4, 0), arg(argc, argv, 5, 0),
-              (int)arg(argc, argv, 6, 400));
+              (int)arg(argc, argv, 6, 400), 0);
+    else if (!strcmp(cmd, "pinch2"))
+        pinch(arg(argc, argv, 2, 0), arg(argc, argv, 3, 0), arg(argc, argv, 4, 0), arg(argc, argv, 5, 0),
+              (int)arg(argc, argv, 6, 400), (int)arg(argc, argv, 7, 250));
     else
         fprintf(stderr, "unknown command %s\n", cmd);
     close_touchscreen();
