@@ -1,0 +1,102 @@
+# Publishes a GitHub Release when a version tag is pushed:
+#   1. checks that the tag matches Version in rpm/harbour-pocketssh.spec and that
+#      rpm/harbour-pocketssh.changes has an entry for it,
+#   2. builds the aarch64, armv7hl and i486 RPMs (build.yml),
+#   3. creates the release "vX.Y.Z" with the RPMs attached and the newest
+#      .changes entry as release notes.
+# See docs/RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check tag against spec
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare tag, spec Version and changelog
+        id: info
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(.github/scripts/release-info.sh "$TAG" "$RUNNER_TEMP/notes.md")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Release notes:"; cat "$RUNNER_TEMP/notes.md"
+
+  build:
+    name: Build
+    needs: check
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yml
+
+  release:
+    name: Publish release
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download RPMs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: harbour-pocketssh-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          for arch in aarch64 armv7hl i486; do
+            ls dist/harbour-pocketssh-"$VERSION"-*."$arch".rpm >/dev/null \
+              || { echo "::error::no $arch RPM for $VERSION"; exit 1; }
+          done
+          .github/scripts/release-info.sh "$TAG" notes.md >/dev/null
+          sfos=$(sed -n 's/^SFOS_RELEASE=//p' .github/scripts/build-rpm.sh)
+          # (YAML strips the block indentation, so EOF ends up in column 0.)
+          cat >> notes.md <<EOF
+
+          ## Install
+
+          Download the RPM that matches your device and install it as described in the
+          [README](https://github.com/$GH_REPO#install):
+
+          - \`aarch64\`: 64-bit ARM phones, e.g. Jolla C2, Xperia 10 II and newer
+          - \`armv7hl\`: 32-bit ARM devices and 32-bit Sailfish OS installs
+          - \`i486\`: the Sailfish SDK emulator
+
+          Not sure? \`uname -m\` in the device terminal prints \`aarch64\`, \`armv7l\` or \`i686\`.
+          Built against Sailfish OS $sfos; runs on $sfos and later.
+          EOF
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file notes.md \
+            dist/*.rpm THIRD_PARTY_NOTICES.md

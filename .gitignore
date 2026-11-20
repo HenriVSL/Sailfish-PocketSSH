@@ -1,0 +1,21 @@
+# qmake / sfdk build output
+build-*/
+*.pro.user
+*.pro.user.*
+.sfdk/
+Makefile
+*.o
+moc_*
+qrc_*
+*.qm
+/harbour-pocketssh
+RPMS/
+*.rpm
+.qmake.stash
+documentation.list
+installroot/
+# host test builds
+tests/*/build/
+# local screenshots
+shots/
+.claude/

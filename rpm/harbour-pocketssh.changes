@@ -1,0 +1,8 @@
+# Changelog for the rpm %changelog (sfdk/mb2 reads this file because it is named
+# harbour-pocketssh.changes). Newest entry first, entries separated by a blank line.
+# Format: * <weekday> <month> <day> <year> <name> <<email>> <version>-<release>
+# The newest entry is also the GitHub release text (see docs/RELEASING.md).
+
+* Fri Nov 20 2026 Henri Lavikainen <henri.lavikainen@gmail.com> 1.0.0-1
+- First release: SSH client for Sailfish OS with saved hosts, tabs, extra keys,
+  trust-on-first-use host keys and Pocket Shell compatible export/import.

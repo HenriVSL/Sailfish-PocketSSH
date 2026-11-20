@@ -1,0 +1,10 @@
+libssh2 1.11.1, unmodified upstream sources.
+
+Source:  https://libssh2.org/download/libssh2-1.11.1.tar.xz
+SHA-256: 9954cb54c4f548198a7cbebad248bdc87dd64bd26185708a294b2b50771e3769
+Signed:  27EDEAF22F3ABCEB50DB9A125CC908FDB71E12C2 (Daniel Stenberg)
+
+Only src/ (minus the libgcrypt, mbedTLS, OS/400 and WinCNG backends),
+include/, COPYING and RELEASE-NOTES are kept. Regenerate with
+tools/vendor-libssh2.sh; the build glue is 3rdparty/libssh2.pri and
+3rdparty/libssh2-config/libssh2_config.h.

@@ -1,0 +1,54 @@
+# Builds the aarch64, armv7hl and i486 RPMs in the Sailfish OS Platform SDK
+# docker image (see .github/scripts/build-rpm.sh) and uploads them as artifacts.
+# Also called by release.yml to build the release RPMs.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push to a pull request cancels its running build. (When release.yml
+  # calls this workflow, github.workflow is "Release", so it never shares a group
+  # with a normal build.)
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rpm:
+    name: rpm (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, armv7hl, i486]
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The SDK image is ~13 GB unpacked; make room on the runner first.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+                      /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Build RPM
+        run: .github/scripts/build-rpm.sh ${{ matrix.arch }} RPMS
+
+      - name: Upload RPM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: harbour-pocketssh-${{ matrix.arch }}
+          path: RPMS/*.rpm
+          if-no-files-found: error
