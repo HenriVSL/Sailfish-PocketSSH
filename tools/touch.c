@@ -3,6 +3,8 @@
  * Runs ON the device as root. The emulators have no python, so this is plain C.
  *
  * Build for the emulator (static, no SDK needed):  gcc -m32 -static -O2 -o touch-i486 tools/touch.c
+ * For the phone, inside the SDK (build-init a scratch dir first):
+ *   sfdk -c target=SailfishOS-5.1.0.11-aarch64 build-shell gcc -O2 -o touch-aarch64 touch.c
  * Copy and run (with the device locked by sfdev):
  *   sfdev scp emu1 touch-i486 :/tmp/touch
  *   sfdev ssh --root emu1 -- /tmp/touch tap 360 800
@@ -48,19 +50,11 @@ static void emit(int fd, int type, int code, int value)
 static void syn(int fd) { emit(fd, EV_SYN, SYN_REPORT, 0); }
 
 /* A virtual multitouch screen through /dev/uinput, the same size as the display. The
- * emulators have no touchscreen of their own, and this way pinch works there too. */
-static void abs_setup(int code, int max)
-{
-    struct uinput_abs_setup a;
-    memset(&a, 0, sizeof a);
-    a.code = code;
-    a.absinfo.maximum = max;
-    ioctl(touch_fd, UI_ABS_SETUP, &a);
-}
-
+ * emulators have no touchscreen of their own, and this way pinch works there too.
+ * Uses the legacy uinput_user_dev setup, which the older SDK kernel headers have. */
 static void open_touchscreen(void)
 {
-    struct uinput_setup setup;
+    struct uinput_user_dev dev;
     touch_fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (touch_fd < 0) {
         perror("/dev/uinput");
@@ -71,23 +65,22 @@ static void open_touchscreen(void)
     ioctl(touch_fd, UI_SET_KEYBIT, BTN_TOUCH);
     ioctl(touch_fd, UI_SET_KEYBIT, BTN_TOOL_FINGER);
     ioctl(touch_fd, UI_SET_PROPBIT, INPUT_PROP_DIRECT);
-    int codes[] = { ABS_X, ABS_Y, ABS_MT_SLOT, ABS_MT_TRACKING_ID, ABS_MT_POSITION_X, ABS_MT_POSITION_Y,
-                    ABS_MT_TOUCH_MAJOR };
-    for (size_t i = 0; i < sizeof codes / sizeof codes[0]; i++)
-        ioctl(touch_fd, UI_SET_ABSBIT, codes[i]);
-    abs_setup(ABS_X, SCREEN_W - 1);
-    abs_setup(ABS_Y, SCREEN_H - 1);
-    abs_setup(ABS_MT_SLOT, 9);
-    abs_setup(ABS_MT_TRACKING_ID, 65535);
-    abs_setup(ABS_MT_POSITION_X, SCREEN_W - 1);
-    abs_setup(ABS_MT_POSITION_Y, SCREEN_H - 1);
-    abs_setup(ABS_MT_TOUCH_MAJOR, 255);
-    memset(&setup, 0, sizeof setup);
-    strcpy(setup.name, "pocketssh-test-touchscreen");
-    setup.id.bustype = BUS_VIRTUAL;
-    setup.id.vendor = 0x1234;
-    setup.id.product = 0x5679;
-    ioctl(touch_fd, UI_DEV_SETUP, &setup);
+    memset(&dev, 0, sizeof dev);
+    strcpy(dev.name, "pocketssh-test-touchscreen");
+    dev.id.bustype = BUS_VIRTUAL;
+    dev.id.vendor = 0x1234;
+    dev.id.product = 0x5679;
+    const struct { int code, max; } axes[] = {
+        { ABS_X, SCREEN_W - 1 }, { ABS_Y, SCREEN_H - 1 }, { ABS_MT_SLOT, 9 },
+        { ABS_MT_TRACKING_ID, 65535 }, { ABS_MT_POSITION_X, SCREEN_W - 1 },
+        { ABS_MT_POSITION_Y, SCREEN_H - 1 }, { ABS_MT_TOUCH_MAJOR, 255 },
+    };
+    for (size_t i = 0; i < sizeof axes / sizeof axes[0]; i++) {
+        ioctl(touch_fd, UI_SET_ABSBIT, axes[i].code);
+        dev.absmax[axes[i].code] = axes[i].max;
+    }
+    if (write(touch_fd, &dev, sizeof dev) != sizeof dev)
+        perror("uinput setup");
     if (ioctl(touch_fd, UI_DEV_CREATE) < 0) {
         perror("uinput create");
         exit(1);
