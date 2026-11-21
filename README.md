@@ -5,6 +5,19 @@ An open-source SSH client for Sailfish OS. A port of
 
 <p align="center"><img src="icons/172x172/harbour-pocketssh.png" width="128" alt="PocketSSH icon"></p>
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/hosts.png" width="240" alt="Host list with two open sessions">
+  <img src="docs/screenshots/terminal.png" width="240" alt="Terminal with the Sailfish keyboard and extra keys">
+  <img src="docs/screenshots/tabs.png" width="240" alt="Two sessions in tabs, one running top">
+</p>
+<p align="center">
+  <img src="docs/screenshots/host-key.png" width="240" alt="Checking the fingerprint of an unknown host">
+  <img src="docs/screenshots/edit-host.png" width="240" alt="Editing a host that signs in with an Ed25519 key">
+  <img src="docs/screenshots/cover.png" width="240" alt="Live terminal on the app cover">
+</p>
+
 ## Features
 
 - **Host list:** add, edit, duplicate, reorder and delete hosts; tap a host to connect.
